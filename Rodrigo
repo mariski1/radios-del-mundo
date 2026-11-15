@@ -1,0 +1,289 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>Radios del mundo</title>
+<style>
+:root{color-scheme:dark;--bg:#101827;--panel:#1b2638;--text:#f5f7fb;--muted:#aab6c8;--accent:#24a8ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,sans-serif;padding-bottom:110px}
+header{padding:25px 18px 18px;background:linear-gradient(135deg,#102d50,#142039)}
+header h1{margin:0;font-size:27px}
+header p{color:#c3d8ed;margin:7px 0 0}
+main{max-width:850px;margin:auto;padding:16px}
+.search,.filters{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:12px}
+input,select,button{font:inherit;border:0;border-radius:11px;padding:12px}
+input,select{background:var(--panel);color:white;min-width:0}
+#search{flex:1;width:100%}
+button{background:var(--accent);color:#061525;font-weight:bold;cursor:pointer}
+button.secondary{background:#2a3b52;color:white}
+button:disabled{opacity:.5}
+.section-title{display:flex;justify-content:space-between;align-items:center;margin:22px 0 12px}
+.section-title h2{font-size:18px;margin:0}
+.station{display:flex;align-items:center;gap:12px;background:var(--panel);padding:13px;border-radius:14px;margin-bottom:9px}
+.station .info{flex:1;min-width:0}
+.station strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.station small{color:var(--muted);display:block;margin-top:5px}
+.station button{padding:10px}
+.fav{background:#2a3b52;color:#ffcf58}
+#status{color:var(--muted);font-size:13px;margin:10px 0}
+.player{position:fixed;bottom:0;left:0;right:0;background:#18263a;border-top:1px solid #34465d;padding:12px 16px calc(12px + env(safe-area-inset-bottom));z-index:5}
+.player-inner{max-width:850px;margin:auto}
+#playing{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px}
+audio{width:100%;height:38px}
+.empty{color:var(--muted);text-align:center;padding:25px}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:25px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌍 Radios del mundo</h1>
+  <p>Tus emisoras favoritas, estés donde estés.</p>
+</header>
+
+<main>
+  <div class="search">
+    <input id="search" placeholder="🔎 Buscar emisora, ciudad o país...">
+    <button onclick="loadStations()">Buscar</button>
+  </div>
+
+  <div class="filters">
+    <select id="country" onchange="loadStations()">
+      <option value="">Todos los países</option>
+    </select>
+    <select id="order" onchange="loadStations()">
+      <option value="clickcount">Más escuchadas</option>
+      <option value="votes">Más votadas</option>
+      <option value="name">Por nombre</option>
+    </select>
+  </div>
+
+  <div class="section-title">
+    <h2>📻 Emisoras</h2>
+    <button class="secondary" onclick="addStation()">＋ Añadir</button>
+  </div>
+  <div id="status">Cargando emisoras...</div>
+  <div id="stations"></div>
+
+  <div class="section-title">
+    <h2>❤️ Mis favoritas</h2>
+  </div>
+  <div id="favorites"><div class="empty">Todavía no tienes favoritas.</div></div>
+
+  <div class="section-title">
+    <h2>🎵 ¿Qué está sonando?</h2>
+  </div>
+  <p style="color:#aab6c8;font-size:14px">
+    La identificación automática de canciones necesita un servicio de reconocimiento de audio.
+    Esta versión no inventa títulos ni artistas cuando la emisora no proporciona esos datos.
+  </p>
+  <button class="secondary" onclick="songInfo()">Consultar canción</button>
+
+  <footer>Radios del mundo · Proyecto gratuito</footer>
+</main>
+
+<div class="player">
+  <div class="player-inner">
+    <div id="playing">Selecciona una emisora para escuchar</div>
+    <audio id="audio" controls playsinline preload="none"></audio>
+  </div>
+</div>
+
+<script>
+const hosts = [
+  "https://de1.api.radio-browser.info",
+  "https://nl1.api.radio-browser.info",
+  "https://at1.api.radio-browser.info"
+];
+
+let api = hosts[0];
+let currentStations = [];
+let favorites = JSON.parse(localStorage.getItem("radioFavorites") || "[]");
+let customStations = JSON.parse(localStorage.getItem("customStations") || "[]");
+
+async function request(path) {
+  for (const host of hosts) {
+    try {
+      const response = await fetch(host + path);
+      if (!response.ok) continue;
+      api = host;
+      return await response.json();
+    } catch (e) {}
+  }
+  throw new Error("No se ha podido conectar con el directorio de radios.");
+}
+
+async function loadCountries() {
+  try {
+    const countries = await request("/json/countries");
+    countries.sort((a,b) => a.name.localeCompare(b.name));
+    const select = document.getElementById("country");
+    countries.forEach(c => {
+      if (!c.name) return;
+      const option = document.createElement("option");
+      option.value = c.name;
+      option.textContent = c.name;
+      select.appendChild(option);
+    });
+  } catch(e) {
+    document.getElementById("status").textContent = "No se pudieron cargar los países.";
+  }
+}
+
+async function loadStations() {
+  const status = document.getElementById("status");
+  const container = document.getElementById("stations");
+  status.textContent = "Buscando emisoras...";
+  container.innerHTML = "";
+
+  const search = document.getElementById("search").value.trim();
+  const country = document.getElementById("country").value;
+  const order = document.getElementById("order").value;
+
+  const params = new URLSearchParams({
+    limit: "100",
+    hidebroken: "true",
+    order,
+    reverse: "true"
+  });
+
+  if (search) params.set("name", search);
+  if (country) params.set("country", country);
+
+  try {
+    const stations = await request("/json/stations/search?" + params);
+    currentStations = stations;
+    const all = [...stations, ...customStations];
+    status.textContent = all.length + " emisoras encontradas";
+    renderStations(all, container);
+  } catch(e) {
+    status.textContent = "Error de conexión. Comprueba tu internet e inténtalo otra vez.";
+  }
+}
+
+function renderStations(stations, container) {
+  container.innerHTML = "";
+  if (!stations.length) {
+    container.innerHTML = '<div class="empty">No se han encontrado emisoras.</div>';
+    return;
+  }
+
+  stations.forEach(station => {
+    const row = document.createElement("div");
+    row.className = "station";
+
+    const info = document.createElement("div");
+    info.className = "info";
+
+    const name = document.createElement("strong");
+    name.textContent = station.name || "Radio sin nombre";
+
+    const detail = document.createElement("small");
+    detail.textContent = [station.state, station.country, station.language]
+      .filter(Boolean).join(" · ");
+
+    info.append(name, detail);
+
+    const play = document.createElement("button");
+    play.textContent = "▶";
+    play.title = "Escuchar";
+    play.onclick = () => playStation(station);
+
+    const fav = document.createElement("button");
+    fav.className = "fav";
+    fav.textContent = favorites.some(f => f.url === station.url_resolved) ? "★" : "♡";
+    fav.title = "Añadir o quitar favorito";
+    fav.onclick = () => toggleFavorite(station);
+
+    row.append(info, play, fav);
+    container.appendChild(row);
+  });
+}
+
+function playStation(station) {
+  const audio = document.getElementById("audio");
+  const url = station.url_resolved || station.url;
+  if (!url) return;
+
+  audio.src = url;
+  audio.play().catch(() => {
+    document.getElementById("playing").textContent =
+      "No se pudo reproducir esta emisora. Prueba otra.";
+  });
+
+  document.getElementById("playing").textContent =
+    "📻 " + (station.name || "Radio");
+}
+
+function toggleFavorite(station) {
+  const url = station.url_resolved || station.url;
+  const exists = favorites.some(f => f.url === url);
+
+  if (exists) {
+    favorites = favorites.filter(f => f.url !== url);
+  } else {
+    favorites.push({
+      name: station.name,
+      country: station.country,
+      url,
+      url_resolved: url
+    });
+  }
+
+  localStorage.setItem("radioFavorites", JSON.stringify(favorites));
+  renderFavorites();
+  loadStations();
+}
+
+function renderFavorites() {
+  const container = document.getElementById("favorites");
+  renderStations(favorites, container);
+  if (!favorites.length) {
+    container.innerHTML = '<div class="empty">Todavía no tienes favoritas.</div>';
+  }
+}
+
+function addStation() {
+  const name = prompt("Nombre de la emisora:");
+  if (!name) return;
+  const url = prompt("Pega el enlace directo del audio (stream):");
+  if (!url) return;
+
+  if (!/^https?:\/\//i.test(url)) {
+    alert("Introduce un enlace que empiece por http:// o https://");
+    return;
+  }
+
+  customStations.push({
+    name,
+    url,
+    url_resolved: url,
+    country: "Personalizada"
+  });
+
+  localStorage.setItem("customStations", JSON.stringify(customStations));
+  loadStations();
+}
+
+function songInfo() {
+  const station = document.getElementById("playing").textContent;
+  alert(
+    "Emisora actual: " + station +
+    "\n\nEsta versión todavía no puede reconocer automáticamente la canción. " +
+    "No todas las radios ofrecen información musical y no existe un reconocimiento universal gratuito e ilimitado."
+  );
+}
+
+document.getElementById("search").addEventListener("keydown", e => {
+  if (e.key === "Enter") loadStations();
+});
+
+loadCountries();
+loadStations();
+renderFavorites();
+</script>
+</body>
+</html>
